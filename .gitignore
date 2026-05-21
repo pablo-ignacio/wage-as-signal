@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+
+# Environment & secrets — NEVER commit API keys
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+env/
+
+# R
+.Rhistory
+.RData
+
+# Logs
+*.log
+
+# Large data files (remove lines below if you want to track them in git)
+# data/raw/*.csv
+# data/raw/*.parquet
+# data/raw/*.json
