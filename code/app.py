@@ -29,7 +29,13 @@ def load_results():
 def load_panel(slug):
     return pd.read_csv(OUTPUTS / f"panel_{slug}.csv")
 
-results = load_results()
+@st.cache_data
+def load_chatgpt():
+    with open(OUTPUTS / "chatgpt_comparison.json") as f:
+        return json.load(f)
+
+results  = load_results()
+chatgpt  = load_chatgpt()
 spec_labels = list(results.keys())
 
 
@@ -175,7 +181,92 @@ resid_table = pd.DataFrame({
 })
 st.dataframe(resid_table, use_container_width=False, hide_index=True, width=320)
 
-# ── Row 4: all-specs comparison ────────────────────────────────────────────
+# ── Row 4: ChatGPT era comparison ─────────────────────────────────────────
+st.markdown("---")
+st.markdown("### ChatGPT era comparison")
+st.markdown(
+    "Split at **October 2022** (ChatGPT launched November 30, 2022). "
+    "Panel is yearly, so pre = year ≤ 2022, post = year ≥ 2023."
+)
+
+cg = chatgpt[selected]
+pre_r  = panel[panel["year"] <= cg["cutoff_year"]]["residual"]
+post_r = panel[panel["year"] >  cg["cutoff_year"]]["residual"]
+
+if len(pre_r) < 2 or len(post_r) < 2:
+    st.warning("Not enough observations in one of the groups for this spec. Try a different specification.")
+else:
+    cg_left, cg_right = st.columns([2, 1])
+
+    with cg_left:
+        fig, ax = plt.subplots(figsize=(7, 4))
+
+        x_min = min(pre_r.min(), post_r.min())
+        x_max = max(pre_r.max(), post_r.max())
+        x_grid = np.linspace(x_min, x_max, 300)
+
+        # KDE curves
+        kde_pre  = stats.gaussian_kde(pre_r)
+        kde_post = stats.gaussian_kde(post_r)
+        ax.plot(x_grid, kde_pre(x_grid),  color="steelblue", lw=2,
+                label=f"Pre-ChatGPT (≤ 2022, N={len(pre_r)})")
+        ax.plot(x_grid, kde_post(x_grid), color="darkorange", lw=2,
+                label=f"Post-ChatGPT (≥ 2023, N={len(post_r)})")
+
+        # Filled area under each curve
+        ax.fill_between(x_grid, kde_pre(x_grid),  alpha=0.15, color="steelblue")
+        ax.fill_between(x_grid, kde_post(x_grid), alpha=0.15, color="darkorange")
+
+        # Vertical lines at means
+        ax.axvline(pre_r.mean(),  color="steelblue",  lw=1.2, ls="--", alpha=0.8)
+        ax.axvline(post_r.mean(), color="darkorange", lw=1.2, ls="--", alpha=0.8)
+
+        ax.set_xlabel(r"Residual $\tau a_i$", fontsize=11)
+        ax.set_ylabel("Density", fontsize=11)
+        ax.set_title(r"Distribution of $\tau a_i$ before and after ChatGPT", fontsize=12)
+        ax.legend(fontsize=10)
+        plt.tight_layout()
+        st.pyplot(fig)
+        plt.close()
+
+    with cg_right:
+        # KS test
+        ks_stat = cg.get("ks_stat")
+        ks_p    = cg.get("ks_p")
+        st.markdown("**Kolmogorov-Smirnov test**")
+        st.markdown("*H₀: same distribution*")
+        if ks_stat is not None:
+            ks_sig = "✓ Reject H₀" if ks_p < 0.05 else "✗ Fail to reject H₀"
+            st.metric("KS statistic", f"{ks_stat:.4f}")
+            st.metric("p-value", f"{ks_p:.4f}", ks_sig)
+
+        st.markdown("---")
+
+        # Side-by-side stats
+        pre_stats  = cg["pre"]
+        post_stats = cg["post"]
+        comp_df = pd.DataFrame({
+            "Statistic" : ["N", "Mean", "Std dev", "Skewness", "Ex. kurtosis", "Median"],
+            "Pre-ChatGPT"  : [
+                pre_stats.get("n", "—"),
+                f"{pre_stats.get('mean', 0):.3f}",
+                f"{pre_stats.get('std',  0):.3f}",
+                f"{pre_stats.get('skew', 0):.3f}",
+                f"{pre_stats.get('kurt', 0):.3f}",
+                f"{pre_stats.get('median', 0):.3f}",
+            ],
+            "Post-ChatGPT" : [
+                post_stats.get("n", "—"),
+                f"{post_stats.get('mean', 0):.3f}",
+                f"{post_stats.get('std',  0):.3f}",
+                f"{post_stats.get('skew', 0):.3f}",
+                f"{post_stats.get('kurt', 0):.3f}",
+                f"{post_stats.get('median', 0):.3f}",
+            ],
+        })
+        st.dataframe(comp_df, hide_index=True, use_container_width=True)
+
+# ── Row 5: all-specs comparison ────────────────────────────────────────────
 st.markdown("---")
 with st.expander("Compare all specifications"):
     comp = []
