@@ -88,6 +88,12 @@ st.sidebar.markdown(
 st.title("Labor Demand Estimation")
 st.latex(r"l_i = \left(\frac{\tau_a}{1+\tau\tau_e}\right)\bar{a} + w_{-i} + \tau a_i")
 st.markdown(
+    "This is a simply beautiful equation. And labor demand increases with wages. "
+    "That's not a typo, it is due to the fact that wages signal complementarity. "
+    "It is a cost, but higher wages also signal that complementarity may be high. "
+    "This equation can be estimated directly. $a_i$ can be estimated as noise."
+)
+st.markdown(
     f"**Spec:** {selected} &nbsp;|&nbsp; "
     f"**N** = {r['n']:,} firm-occupation-year cells &nbsp;|&nbsp; "
     f"**R²** = {r['r2']:.4f}"
