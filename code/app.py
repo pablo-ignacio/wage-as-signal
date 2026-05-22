@@ -99,39 +99,93 @@ st.markdown(
     f"**R²** = {r['r2']:.4f}"
 )
 
-# ── Section 1: Overall distribution of errors ─────────────────────────────
+# ── Section 1: Pre/post ChatGPT error distributions (observed wages only) ──
 st.markdown("---")
-st.markdown("### Distribution of errors  $\\tau a_i$")
+st.markdown("### Distribution of errors $\\tau a_i$ — before and after ChatGPT")
+st.markdown(
+    "Residuals from the regression estimated on **employer-posted wages only** (non-imputed). "
+    "Split at October 2022: pre = year ≤ 2022, post = year ≥ 2023."
+)
 
-resid_all = panel["residual"]
-x_grid    = np.linspace(resid_all.min(), resid_all.max(), 300)
-mu, sigma = stats.norm.fit(resid_all)
-kde_all   = stats.gaussian_kde(resid_all)
+# Always use the observed-wages / log-wage panel for this plot
+obs_panel_data = load_panel("4_log_wage")
+cg_obs  = chatgpt["(4) Log wage — Observed wages"]
+pre_r   = obs_panel_data[obs_panel_data["year"] <= cg_obs["cutoff_year"]]["residual"]
+post_r  = obs_panel_data[obs_panel_data["year"] >  cg_obs["cutoff_year"]]["residual"]
+ks_stat = cg_obs.get("ks_stat")
+ks_p    = cg_obs.get("ks_p")
 
-fig, ax = plt.subplots(figsize=(8, 4))
-ax.hist(resid_all, bins=40, density=True, color="steelblue", alpha=0.5, label="Empirical")
-ax.plot(x_grid, kde_all(x_grid),              color="steelblue", lw=2,        label="KDE")
-ax.plot(x_grid, stats.norm.pdf(x_grid, mu, sigma), color="red", lw=1.8, ls="--", label="Normal fit")
-ax.axvline(resid_all.mean(),   color="steelblue", lw=1.2, ls="--", alpha=0.7, label=f"Mean = {resid_all.mean():.2f}")
-ax.axvline(resid_all.median(), color="navy",      lw=1.2, ls=":",  alpha=0.7, label=f"Median = {resid_all.median():.2f}")
-ax.set_xlabel(r"Residual $\tau a_i$", fontsize=11)
-ax.set_ylabel("Density", fontsize=11)
-ax.set_title(r"Full distribution of $\tau a_i$", fontsize=12)
-ax.legend(fontsize=9)
+x_min  = min(pre_r.min(), post_r.min()) - 0.2
+x_max  = max(pre_r.max(), post_r.max()) + 0.2
+x_grid = np.linspace(x_min, x_max, 300)
+
+fig, axes = plt.subplots(1, 2, figsize=(12, 4), sharey=False)
+fig.suptitle(
+    r"Distribution of $\tau a_i$ from regression on employer-posted wages",
+    fontsize=13
+)
+
+for ax, grp, color, title in zip(
+    axes,
+    [pre_r,       post_r],
+    ["steelblue", "darkorange"],
+    [f"Pre-ChatGPT  (year ≤ 2022,  N = {len(pre_r)})",
+     f"Post-ChatGPT  (year ≥ 2023,  N = {len(post_r)})"],
+):
+    mu_g, sig_g = stats.norm.fit(grp)
+    kde_g = stats.gaussian_kde(grp)
+
+    ax.hist(grp, bins=20, density=True, color=color, alpha=0.4, label="Histogram")
+    ax.plot(x_grid, kde_g(x_grid),                      color=color, lw=2.5, label="KDE")
+    ax.plot(x_grid, stats.norm.pdf(x_grid, mu_g, sig_g), color="red", lw=1.5,
+            ls="--", label="Normal fit")
+    ax.axvline(grp.mean(),   color=color, lw=1.5, ls="--",
+               label=f"Mean = {grp.mean():.2f}")
+    ax.axvline(grp.median(), color="black", lw=1.2, ls=":",
+               label=f"Median = {grp.median():.2f}")
+
+    ax.set_xlim(x_min, x_max)
+    ax.set_xlabel(r"Residual  $\tau a_i$", fontsize=11)
+    ax.set_ylabel("Density", fontsize=11)
+    ax.set_title(title, fontsize=11, color=color, fontweight="bold")
+    ax.legend(fontsize=8.5)
+
+    # Annotate key stats inside the plot
+    stats_txt = (
+        f"Skewness = {grp.skew():.2f}\n"
+        f"Std dev  = {grp.std():.2f}\n"
+        f"Ex. kurt = {grp.kurtosis():.2f}"
+    )
+    ax.text(0.97, 0.97, stats_txt, transform=ax.transAxes,
+            fontsize=8.5, va="top", ha="right",
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.7))
+
 plt.tight_layout()
 st.pyplot(fig)
 plt.close()
 
+ks_interp = (
+    f"The Kolmogorov-Smirnov test **rejects** the null of equal distributions "
+    f"(KS = {ks_stat:.3f}, p = {ks_p:.3f}), indicating the two distributions are "
+    f"statistically different."
+    if ks_p is not None and ks_p < 0.05 else
+    f"The Kolmogorov-Smirnov test does **not** reject the null of equal distributions "
+    f"(KS = {ks_stat:.3f}, p = {ks_p:.3f})."
+    if ks_p is not None else ""
+)
 st.caption(
-    f"Distribution of the OLS residual τaᵢ across all {len(resid_all):,} firm–occupation–year cells. "
-    f"The blue bars show the empirical histogram; the solid blue curve is the kernel density estimate; "
-    f"the red dashed curve is a fitted normal distribution. "
-    f"The residual is right-skewed (skewness = {r['resid_skew']:.2f}), meaning a minority of "
-    f"firm–occupation–year cells post far more jobs than occupation wages alone predict. "
-    f"The Jarque-Bera test rejects normality (p = {r['jb_p']:.2e})."
+    f"Each panel shows the distribution of the OLS residual τaᵢ = $l_i - \\hat{{\\alpha}} - \\hat{{\\beta}}\\,w_{{-i}}$, "
+    f"estimated using only the {len(obs_panel_data):,} firm–occupation–year cells where employers "
+    f"actually posted a wage (non-imputed). "
+    f"Histograms, kernel density estimates (solid), and fitted normal curves (red dashed) are shown. "
+    f"Dashed vertical lines mark group means; dotted lines mark medians. "
+    f"Key statistics are annotated in the top-right corner of each panel. "
+    + ks_interp +
+    f" A compression of the right tail post-2022 would be consistent with AI tools "
+    f"reducing the signaling advantage of high-ability firms."
 )
 
-# ── Section 2: ChatGPT era comparison ─────────────────────────────────────
+# ── Section 2: ChatGPT era KS test summary ────────────────────────────────
 st.markdown("---")
 st.markdown("### ChatGPT era comparison")
 st.markdown(
@@ -139,92 +193,38 @@ st.markdown(
     "Panel is yearly, so pre = year ≤ 2022, post = year ≥ 2023."
 )
 
-cg    = chatgpt[selected]
-pre_r = panel[panel["year"] <= cg["cutoff_year"]]["residual"]
-post_r = panel[panel["year"] >  cg["cutoff_year"]]["residual"]
+pre_stats  = cg_obs["pre"]
+post_stats = cg_obs["post"]
 
-if len(pre_r) < 2 or len(post_r) < 2:
-    st.warning("Not enough observations in one of the groups for this spec. Try a different specification.")
-else:
-    cg_left, cg_right = st.columns([2, 1])
+col_left, col_right = st.columns([1, 1])
 
-    with cg_left:
-        fig, ax = plt.subplots(figsize=(7, 4))
-        x_min  = min(pre_r.min(), post_r.min())
-        x_max  = max(pre_r.max(), post_r.max())
-        x_grid = np.linspace(x_min, x_max, 300)
+with col_left:
+    comp_df = pd.DataFrame({
+        "Statistic"    : ["N", "Mean", "Std dev", "Skewness", "Ex. kurtosis", "Median"],
+        "Pre-ChatGPT"  : [
+            pre_stats.get("n", "—"),
+            f"{pre_stats.get('mean',   0):.3f}",
+            f"{pre_stats.get('std',    0):.3f}",
+            f"{pre_stats.get('skew',   0):.3f}",
+            f"{pre_stats.get('kurt',   0):.3f}",
+            f"{pre_stats.get('median', 0):.3f}",
+        ],
+        "Post-ChatGPT" : [
+            post_stats.get("n", "—"),
+            f"{post_stats.get('mean',   0):.3f}",
+            f"{post_stats.get('std',    0):.3f}",
+            f"{post_stats.get('skew',   0):.3f}",
+            f"{post_stats.get('kurt',   0):.3f}",
+            f"{post_stats.get('median', 0):.3f}",
+        ],
+    })
+    st.dataframe(comp_df, hide_index=True, use_container_width=True)
 
-        kde_pre  = stats.gaussian_kde(pre_r)
-        kde_post = stats.gaussian_kde(post_r)
-        ax.plot(x_grid, kde_pre(x_grid),  color="steelblue",  lw=2,
-                label=f"Pre-ChatGPT (≤ 2022, N={len(pre_r)})")
-        ax.plot(x_grid, kde_post(x_grid), color="darkorange", lw=2,
-                label=f"Post-ChatGPT (≥ 2023, N={len(post_r)})")
-        ax.fill_between(x_grid, kde_pre(x_grid),  alpha=0.15, color="steelblue")
-        ax.fill_between(x_grid, kde_post(x_grid), alpha=0.15, color="darkorange")
-        ax.axvline(pre_r.mean(),  color="steelblue",  lw=1.2, ls="--", alpha=0.8)
-        ax.axvline(post_r.mean(), color="darkorange", lw=1.2, ls="--", alpha=0.8)
-        ax.set_xlabel(r"Residual $\tau a_i$", fontsize=11)
-        ax.set_ylabel("Density", fontsize=11)
-        ax.set_title(r"Distribution of $\tau a_i$ before and after ChatGPT", fontsize=12)
-        ax.legend(fontsize=10)
-        plt.tight_layout()
-        st.pyplot(fig)
-        plt.close()
-
-        ks_p_val  = cg.get("ks_p")
-        ks_interp = (
-            f"The Kolmogorov-Smirnov test **rejects** the null of equal distributions "
-            f"(p = {ks_p_val:.3f}), suggesting the emergence of ChatGPT is associated "
-            f"with a statistically significant shift in unobserved firm heterogeneity."
-            if ks_p_val is not None and ks_p_val < 0.05 else
-            f"The Kolmogorov-Smirnov test **does not reject** the null of equal distributions "
-            f"(p = {ks_p_val:.3f} > 0.05) for this specification."
-            if ks_p_val is not None else ""
-        )
-        st.caption(
-            f"Kernel density estimates of the residual τaᵢ split at October 2022, "
-            f"just before ChatGPT launched (November 30, 2022). "
-            f"Since the panel is at the yearly level, pre-ChatGPT covers postings from years ≤ 2022 "
-            f"(N = {len(pre_r)}) and post-ChatGPT covers years ≥ 2023 (N = {len(post_r)}). "
-            f"Dashed vertical lines mark the group means. "
-            + ks_interp +
-            f" A decrease in right-skewness after 2022 would be consistent with AI tools "
-            f"compressing the signaling advantage of high-ability firms."
-        )
-
-    with cg_right:
-        ks_stat = cg.get("ks_stat")
-        ks_p    = cg.get("ks_p")
-        st.markdown("**Kolmogorov-Smirnov test**")
-        st.markdown("*H₀: same distribution*")
-        if ks_stat is not None:
-            ks_sig = "✓ Reject H₀" if ks_p < 0.05 else "✗ Fail to reject H₀"
-            st.metric("KS statistic", f"{ks_stat:.4f}")
-            st.metric("p-value", f"{ks_p:.4f}", ks_sig)
-        st.markdown("---")
-        pre_stats  = cg["pre"]
-        post_stats = cg["post"]
-        comp_df = pd.DataFrame({
-            "Statistic"    : ["N", "Mean", "Std dev", "Skewness", "Ex. kurtosis", "Median"],
-            "Pre-ChatGPT"  : [
-                pre_stats.get("n", "—"),
-                f"{pre_stats.get('mean', 0):.3f}",
-                f"{pre_stats.get('std',  0):.3f}",
-                f"{pre_stats.get('skew', 0):.3f}",
-                f"{pre_stats.get('kurt', 0):.3f}",
-                f"{pre_stats.get('median', 0):.3f}",
-            ],
-            "Post-ChatGPT" : [
-                post_stats.get("n", "—"),
-                f"{post_stats.get('mean', 0):.3f}",
-                f"{post_stats.get('std',  0):.3f}",
-                f"{post_stats.get('skew', 0):.3f}",
-                f"{post_stats.get('kurt', 0):.3f}",
-                f"{post_stats.get('median', 0):.3f}",
-            ],
-        })
-        st.dataframe(comp_df, hide_index=True, use_container_width=True)
+with col_right:
+    ks_sig = "✓ Reject H₀" if ks_p < 0.05 else "✗ Fail to reject H₀"
+    st.markdown("**Kolmogorov-Smirnov test** — H₀: same distribution")
+    st.metric("KS statistic", f"{ks_stat:.4f}")
+    st.metric("p-value",      f"{ks_p:.4f}", ks_sig)
 
 # ── Section 3: Regression coefficients ────────────────────────────────────
 st.markdown("---")
