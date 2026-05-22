@@ -99,7 +99,39 @@ st.markdown(
     f"**R²** = {r['r2']:.4f}"
 )
 
-# ── Section 1: ChatGPT era comparison ─────────────────────────────────────
+# ── Section 1: Overall distribution of errors ─────────────────────────────
+st.markdown("---")
+st.markdown("### Distribution of errors  $\\tau a_i$")
+
+resid_all = panel["residual"]
+x_grid    = np.linspace(resid_all.min(), resid_all.max(), 300)
+mu, sigma = stats.norm.fit(resid_all)
+kde_all   = stats.gaussian_kde(resid_all)
+
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.hist(resid_all, bins=40, density=True, color="steelblue", alpha=0.5, label="Empirical")
+ax.plot(x_grid, kde_all(x_grid),              color="steelblue", lw=2,        label="KDE")
+ax.plot(x_grid, stats.norm.pdf(x_grid, mu, sigma), color="red", lw=1.8, ls="--", label="Normal fit")
+ax.axvline(resid_all.mean(),   color="steelblue", lw=1.2, ls="--", alpha=0.7, label=f"Mean = {resid_all.mean():.2f}")
+ax.axvline(resid_all.median(), color="navy",      lw=1.2, ls=":",  alpha=0.7, label=f"Median = {resid_all.median():.2f}")
+ax.set_xlabel(r"Residual $\tau a_i$", fontsize=11)
+ax.set_ylabel("Density", fontsize=11)
+ax.set_title(r"Full distribution of $\tau a_i$", fontsize=12)
+ax.legend(fontsize=9)
+plt.tight_layout()
+st.pyplot(fig)
+plt.close()
+
+st.caption(
+    f"Distribution of the OLS residual τaᵢ across all {len(resid_all):,} firm–occupation–year cells. "
+    f"The blue bars show the empirical histogram; the solid blue curve is the kernel density estimate; "
+    f"the red dashed curve is a fitted normal distribution. "
+    f"The residual is right-skewed (skewness = {r['resid_skew']:.2f}), meaning a minority of "
+    f"firm–occupation–year cells post far more jobs than occupation wages alone predict. "
+    f"The Jarque-Bera test rejects normality (p = {r['jb_p']:.2e})."
+)
+
+# ── Section 2: ChatGPT era comparison ─────────────────────────────────────
 st.markdown("---")
 st.markdown("### ChatGPT era comparison")
 st.markdown(
@@ -194,7 +226,7 @@ else:
         })
         st.dataframe(comp_df, hide_index=True, use_container_width=True)
 
-# ── Section 2: Regression coefficients ────────────────────────────────────
+# ── Section 3: Regression coefficients ────────────────────────────────────
 st.markdown("---")
 st.markdown("### Estimation results")
 col1, col2, col3 = st.columns(3)
@@ -215,7 +247,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ── Section 3: scatter + residual distribution ─────────────────────────────
+# ── Section 4: scatter + residual distribution ─────────────────────────────
 st.markdown("---")
 st.markdown("### Residual distribution  $\\tau a_i$")
 
@@ -273,7 +305,7 @@ with right:
         f"jobs than occupation wages alone predict."
     )
 
-# ── Section 4: residual stats table ───────────────────────────────────────
+# ── Section 5: residual stats table ───────────────────────────────────────
 st.markdown("---")
 st.markdown("### Residual statistics")
 resid_table = pd.DataFrame({
@@ -287,7 +319,7 @@ resid_table = pd.DataFrame({
 })
 st.dataframe(resid_table, use_container_width=False, hide_index=True, width=320)
 
-# ── Section 5: all-specs comparison ───────────────────────────────────────
+# ── Section 6: all-specs comparison ───────────────────────────────────────
 st.markdown("---")
 with st.expander("Compare all specifications"):
     comp = []
