@@ -134,6 +134,15 @@ with left:
     ax.legend(fontsize=9)
     st.pyplot(fig)
     plt.close()
+    w_label = "mean occupation wage" if w_col == "w_loo" else "log mean occupation wage"
+    st.caption(
+        f"Each point is one firm–occupation–year cell. "
+        f"The horizontal axis shows the leave-one-out {w_label} — "
+        f"the average wage posted by all other firms in the same occupation and year, "
+        f"which removes the mechanical correlation between a firm's own wage and the market wage. "
+        f"The red line is the OLS fit (β̂ = {r['w_coef']:.2e}, "
+        f"p = {r['w_p']:.3f})."
+    )
 
 with right:
     resid = panel["residual"]
@@ -158,6 +167,16 @@ with right:
     plt.tight_layout()
     st.pyplot(fig)
     plt.close()
+    st.caption(
+        f"The residual τaᵢ captures unobserved firm heterogeneity not explained by the "
+        f"occupation wage — interpreted in the model as the firm's signaling ability aᵢ. "
+        f"The histogram (left) overlays a fitted normal distribution (red dashed). "
+        f"The Q-Q plot (right) compares sample quantiles against a normal reference line: "
+        f"systematic departures indicate non-normality. "
+        f"Here skewness = {r['resid_skew']:.2f} and the Jarque-Bera test rejects normality "
+        f"(p = {r['jb_p']:.2e}), suggesting the distribution has a longer right tail than "
+        f"a normal — some firms post far more jobs than occupation wages alone predict."
+    )
 
 # ── Row 3: residual stats table ────────────────────────────────────────────
 st.markdown("---")
@@ -228,6 +247,26 @@ else:
         plt.tight_layout()
         st.pyplot(fig)
         plt.close()
+        ks_p_val = cg.get("ks_p")
+        ks_interp = (
+            f"The Kolmogorov-Smirnov test **rejects** the null of equal distributions "
+            f"(p = {ks_p_val:.3f}), suggesting the emergence of ChatGPT is associated "
+            f"with a statistically significant shift in unobserved firm heterogeneity."
+            if ks_p_val is not None and ks_p_val < 0.05 else
+            f"The Kolmogorov-Smirnov test **does not reject** the null of equal distributions "
+            f"(p = {ks_p_val:.3f} > 0.05) for this specification."
+            if ks_p_val is not None else ""
+        )
+        st.caption(
+            f"Kernel density estimates of the residual τaᵢ split at October 2022, "
+            f"just before ChatGPT launched (November 30, 2022). "
+            f"Since the panel is at the yearly level, pre-ChatGPT covers postings from years ≤ 2022 "
+            f"(N = {len(pre_r)}) and post-ChatGPT covers years ≥ 2023 (N = {len(post_r)}). "
+            f"Dashed vertical lines mark the group means. "
+            + ks_interp +
+            f" A decrease in right-skewness after 2022 would be consistent with AI tools "
+            f"compressing the signaling advantage of high-ability firms."
+        )
 
     with cg_right:
         # KS test
