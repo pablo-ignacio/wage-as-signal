@@ -185,6 +185,35 @@ st.caption(
     f"reducing the signaling advantage of high-ability firms."
 )
 
+# Overlay plot — both curves on the same axes
+kde_pre  = stats.gaussian_kde(pre_r)
+kde_post = stats.gaussian_kde(post_r)
+
+fig, ax = plt.subplots(figsize=(8, 4))
+ax.plot(x_grid, kde_pre(x_grid),  color="steelblue",  lw=2.5,
+        label=f"Pre-ChatGPT  (≤ 2022,  N={len(pre_r)})")
+ax.plot(x_grid, kde_post(x_grid), color="darkorange", lw=2.5,
+        label=f"Post-ChatGPT  (≥ 2023,  N={len(post_r)})")
+ax.fill_between(x_grid, kde_pre(x_grid),  alpha=0.15, color="steelblue")
+ax.fill_between(x_grid, kde_post(x_grid), alpha=0.15, color="darkorange")
+ax.axvline(pre_r.mean(),  color="steelblue",  lw=1.5, ls="--", alpha=0.8,
+           label=f"Pre mean = {pre_r.mean():.2f}")
+ax.axvline(post_r.mean(), color="darkorange", lw=1.5, ls="--", alpha=0.8,
+           label=f"Post mean = {post_r.mean():.2f}")
+ax.set_xlabel(r"Residual  $\tau a_i$", fontsize=11)
+ax.set_ylabel("Density", fontsize=11)
+ax.set_title(r"Overlay: $\tau a_i$ before vs. after ChatGPT (employer-posted wages only)",
+             fontsize=12)
+ax.legend(fontsize=10)
+plt.tight_layout()
+st.pyplot(fig)
+plt.close()
+st.caption(
+    "Same residuals as the panels above, now overlaid on a single axis for direct comparison. "
+    "Where the orange curve (post-ChatGPT) sits to the left of the blue curve (pre-ChatGPT), "
+    "firms post fewer jobs than predicted relative to before — and vice versa for the right tail."
+)
+
 # ── Section 2: ChatGPT era KS test summary ────────────────────────────────
 st.markdown("---")
 st.markdown("### ChatGPT era comparison")
