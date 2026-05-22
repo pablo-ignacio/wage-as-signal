@@ -86,6 +86,7 @@ st.sidebar.markdown(
 # MAIN
 # ══════════════════════════════════════════════════════════════════════════
 st.title("Labor Demand Estimation")
+st.latex(r"l_i = \left(\frac{\tau_a}{1+\tau\tau_e}\right)\bar{a} + w_{-i} + \tau a_i")
 st.markdown(
     f"**Spec:** {selected} &nbsp;|&nbsp; "
     f"**N** = {r['n']:,} firm-occupation-year cells &nbsp;|&nbsp; "
