@@ -614,3 +614,253 @@ else:
             "Bartlett's assumes normality. F-test is two-sided. "
             "Note: N is small (industry × month cells), so power is limited."
         )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 8 — PUBLIC DATA (ALL 10 INDUSTRIES): BLS JOLTS × CES
+# ══════════════════════════════════════════════════════════════════════════════
+
+st.markdown("---")
+st.markdown("## Full Industry Coverage: BLS JOLTS × CES (10 industries)")
+st.markdown(
+    "Same equation as above, now using all 10 private-sector JOLTS industries "
+    r"(Construction, Information, Financial Activities, and Education & Health added). "
+    "JOLTS series IDs fetched via BLS API v2 using registered key. "
+    r"N = 1,560 (10 industries × 156 months, Jan 2012–Dec 2024)."
+)
+
+_bls10_res_path   = OUTPUTS / "bls10_regression_results.json"
+_bls10_panel_path = OUTPUTS / "bls10_panel_with_residuals.csv"
+
+if not _bls10_res_path.exists() or not _bls10_panel_path.exists():
+    st.info("10-industry BLS results not yet generated.")
+else:
+    @st.cache_data
+    def load_bls10_results():
+        with open(_bls10_res_path) as f:
+            return json.load(f)
+
+    @st.cache_data
+    def load_bls10_panel():
+        return pd.read_csv(_bls10_panel_path, parse_dates=["date"])
+
+    bls10_r     = load_bls10_results()
+    bls10_panel = load_bls10_panel()
+
+    # ── regression summary ─────────────────────────────────────────────────
+    c1, c2, c3 = st.columns(3)
+    c1.metric(
+        "β on log(wage)",
+        fmt_coef(bls10_r["w_coef"], bls10_r["w_p"]),
+        f"SE = {bls10_r['w_se']:.4f}  p = {bls10_r['w_p']:.3f}",
+    )
+    c2.metric("R²", f"{bls10_r['r2']:.4f}")
+    c3.metric(
+        "N",
+        f"{bls10_r['n']:,}",
+        f"{bls10_r['n_industries']} industries × monthly  "
+        f"({bls10_r['date_min']} – {bls10_r['date_max']})",
+    )
+    st.markdown(
+        "<small>\\* p<0.10 &nbsp; \\*\\* p<0.05 &nbsp; \\*\\*\\* p<0.01 &nbsp;"
+        " (HC3 robust SEs)</small>",
+        unsafe_allow_html=True,
+    )
+
+    # ── scatter + residual distribution ────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### Full-sample fit")
+    left_c, right_c = st.columns(2)
+
+    with left_c:
+        industries10 = sorted(bls10_panel["industry"].unique())
+        cmap10 = plt.cm.get_cmap("tab20", len(industries10))
+        ind_colors10 = {ind: cmap10(i) for i, ind in enumerate(industries10)}
+
+        fig, ax = plt.subplots(figsize=(5, 4))
+        for ind, grp in bls10_panel.groupby("industry"):
+            ax.scatter(grp["log_wage"], grp["log_openings"],
+                       color=ind_colors10[ind], s=8, alpha=0.45, label=ind)
+        x_line10 = np.linspace(bls10_panel["log_wage"].min(), bls10_panel["log_wage"].max(), 200)
+        y_line10 = bls10_r["const_coef"] + bls10_r["w_coef"] * x_line10
+        ax.plot(x_line10, y_line10, "k-", lw=1.8, label="OLS fit")
+        ax.set_xlabel(r"$\log(\text{wage}_{it})$", fontsize=11)
+        ax.set_ylabel(r"$\log(\text{openings}_{it})$", fontsize=11)
+        ax.set_title("Data and fitted line (by industry)", fontsize=11)
+        ax.legend(fontsize=5.5, ncol=2, loc="upper left")
+        plt.tight_layout()
+        st.pyplot(fig)
+        plt.close()
+        st.caption(
+            f"Each dot is one industry–month cell. Colors = industries. "
+            f"Black line: OLS fit (β = {bls10_r['w_coef']:+.4f}, p = {bls10_r['w_p']:.3f}). "
+            f"N = {bls10_r['n']:,}."
+        )
+
+    with right_c:
+        resid10 = bls10_panel["residual"]
+        x_grid10 = np.linspace(resid10.min(), resid10.max(), 300)
+        mu10, sigma10 = stats.norm.fit(resid10)
+
+        fig, axes = plt.subplots(1, 2, figsize=(6, 4))
+        axes[0].hist(resid10, bins=30, density=True, color="steelblue", alpha=0.65)
+        axes[0].plot(x_grid10, stats.norm.pdf(x_grid10, mu10, sigma10), "r--", lw=1.5,
+                     label="Normal")
+        axes[0].set_xlabel(r"$\varepsilon_{it}$")
+        axes[0].set_ylabel("Density")
+        axes[0].set_title("Histogram")
+        axes[0].legend(fontsize=8)
+
+        stats.probplot(resid10, plot=axes[1])
+        axes[1].set_title("Q-Q plot")
+        axes[1].get_lines()[1].set(color="red", lw=1.5)
+
+        plt.tight_layout()
+        st.pyplot(fig)
+        plt.close()
+        st.caption(
+            f"Residual τaᵢₜ = unexplained posting intensity relative to market wage. "
+            f"Skewness = {bls10_r['resid_skew']:.2f}, "
+            f"JB p = {bls10_r['jb_p']:.2e}."
+        )
+
+    # ── pre/post ChatGPT comparison ────────────────────────────────────────
+    st.markdown("---")
+    st.markdown("### $\\varepsilon_{it}$ pre vs post ChatGPT  (split: November 2022)")
+    st.markdown("Pre = industry–months before Nov 2022.  Post = Nov 2022 onward.")
+
+    cutoff10 = pd.Timestamp(bls10_r["cutoff"])
+    pre_r10  = bls10_panel.loc[bls10_panel["date"] <  cutoff10, "residual"]
+    post_r10 = bls10_panel.loc[bls10_panel["date"] >= cutoff10, "residual"]
+
+    x_min10  = min(pre_r10.min(), post_r10.min()) - 0.2
+    x_max10  = max(pre_r10.max(), post_r10.max()) + 0.2
+    x_grid10b = np.linspace(x_min10, x_max10, 300)
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4), sharey=False)
+    fig.suptitle(r"Distribution of $\varepsilon_{it}$ — BLS JOLTS × CES (10 industries)", fontsize=13)
+    for ax, grp, color, title in zip(
+        axes,
+        [pre_r10, post_r10],
+        ["steelblue", "darkorange"],
+        [f"Pre-ChatGPT  (before Nov 2022,  N = {len(pre_r10)})",
+         f"Post-ChatGPT  (Nov 2022 onward,  N = {len(post_r10)})"],
+    ):
+        mu_g, sig_g = stats.norm.fit(grp)
+        kde_g = stats.gaussian_kde(grp)
+        ax.hist(grp, bins=25, density=True, color=color, alpha=0.4, label="Histogram")
+        ax.plot(x_grid10b, kde_g(x_grid10b),                        color=color, lw=2.5,
+                label="KDE")
+        ax.plot(x_grid10b, stats.norm.pdf(x_grid10b, mu_g, sig_g),  color="red",  lw=1.5,
+                ls="--", label="Normal fit")
+        ax.axvline(grp.mean(),   color=color,   lw=1.5, ls="--",
+                   label=f"Mean = {grp.mean():.3f}")
+        ax.axvline(grp.median(), color="black", lw=1.2, ls=":",
+                   label=f"Median = {grp.median():.3f}")
+        ax.set_xlim(x_min10, x_max10)
+        ax.set_xlabel(r"Residual $\varepsilon_{it}$", fontsize=11)
+        ax.set_ylabel("Density", fontsize=11)
+        ax.set_title(title, fontsize=11, color=color, fontweight="bold")
+        ax.legend(fontsize=8.5)
+        ax.text(0.97, 0.97,
+                f"Skewness = {grp.skew():.2f}\nStd dev  = {grp.std():.2f}\n"
+                f"Ex. kurt = {grp.kurtosis():.2f}",
+                transform=ax.transAxes, fontsize=8.5, va="top", ha="right",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.7))
+    plt.tight_layout()
+    st.pyplot(fig)
+    plt.close()
+    st.caption(
+        "Histogram, KDE (solid), and normal fit (red dashed) for each sub-period. "
+        "Dashed lines = means; dotted = medians."
+    )
+
+    # overlay
+    fig, ax = plt.subplots(figsize=(8, 4))
+    for grp, color, lbl in [
+        (pre_r10,  "steelblue",  f"Pre-ChatGPT  (N={len(pre_r10)})"),
+        (post_r10, "darkorange", f"Post-ChatGPT  (N={len(post_r10)})"),
+    ]:
+        kde_g = stats.gaussian_kde(grp)
+        ax.plot(x_grid10b, kde_g(x_grid10b), color=color, lw=2.5, label=lbl)
+        ax.fill_between(x_grid10b, kde_g(x_grid10b), alpha=0.15, color=color)
+        ax.axvline(grp.mean(), color=color, lw=1.5, ls="--", alpha=0.8)
+    ax.set_xlabel(r"Residual $\varepsilon_{it}$", fontsize=11)
+    ax.set_ylabel("Density", fontsize=11)
+    ax.set_title(r"Overlay — BLS JOLTS × CES (10 industries)", fontsize=12)
+    ax.legend(fontsize=10)
+    plt.tight_layout()
+    st.pyplot(fig)
+    plt.close()
+    st.caption(
+        "Where the orange curve sits to the right of the blue curve, "
+        "post-ChatGPT industry–months show higher job openings than market wages predict."
+    )
+
+    # stats tables
+    lev10_stat,  lev10_p  = stats.levene(pre_r10, post_r10, center="mean")
+    bart10_stat, bart10_p = stats.bartlett(pre_r10, post_r10)
+    f10_stat = pre_r10.var() / post_r10.var()
+    f10_p = 2 * min(
+        stats.f.cdf(f10_stat, len(pre_r10)-1, len(post_r10)-1),
+        stats.f.sf( f10_stat, len(pre_r10)-1, len(post_r10)-1),
+    )
+
+    def sig10(p): return "✓ Reject H₀" if p < 0.05 else "✗ Fail to reject"
+
+    tests_df10 = pd.DataFrame({
+        "Test": [
+            "KS test (equal distributions)",
+            "Levene's test (equal variances)",
+            "Bartlett's test (equal variances)",
+            "F-test (equal variances)",
+        ],
+        "H₀": [
+            "Same distribution",
+            "Var(pre) = Var(post)",
+            "Var(pre) = Var(post)",
+            "Var(pre) = Var(post)",
+        ],
+        "Statistic": [
+            f"{bls10_r['ks_stat']:.4f}",
+            f"{lev10_stat:.4f}",
+            f"{bart10_stat:.4f}",
+            f"{f10_stat:.4f}",
+        ],
+        "p-value": [
+            f"{bls10_r['ks_p']:.4f}",
+            f"{lev10_p:.4f}",
+            f"{bart10_p:.4f}",
+            f"{f10_p:.4f}",
+        ],
+        "Result (5%)": [
+            sig10(bls10_r["ks_p"]),
+            sig10(lev10_p),
+            sig10(bart10_p),
+            sig10(f10_p),
+        ],
+    })
+
+    pre10_s  = bls10_r["pre"]
+    post10_s = bls10_r["post"]
+    summary_df10 = pd.DataFrame({
+        "Statistic":    ["N", "Mean", "Std dev", "Skewness", "Ex. kurtosis", "Median"],
+        "Pre-ChatGPT":  [pre10_s["n"],  f"{pre10_s['mean']:.3f}",  f"{pre10_s['std']:.3f}",
+                         f"{pre10_s['skew']:.3f}",  f"{pre10_s['kurt']:.3f}",
+                         f"{pre10_s['median']:.3f}"],
+        "Post-ChatGPT": [post10_s["n"], f"{post10_s['mean']:.3f}", f"{post10_s['std']:.3f}",
+                         f"{post10_s['skew']:.3f}", f"{post10_s['kurt']:.3f}",
+                         f"{post10_s['median']:.3f}"],
+    })
+
+    col_l10, col_r10 = st.columns([1, 1])
+    with col_l10:
+        st.markdown("**Summary statistics**")
+        st.dataframe(summary_df10, hide_index=True, use_container_width=True)
+    with col_r10:
+        st.markdown("**Statistical tests**")
+        st.dataframe(tests_df10, hide_index=True, use_container_width=True)
+        st.caption(
+            "Levene's test is robust to non-normality (preferred). "
+            "Bartlett's assumes normality. F-test is two-sided."
+        )
