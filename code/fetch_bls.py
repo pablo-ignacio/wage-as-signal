@@ -1,15 +1,12 @@
 """
-Fetch JOLTS job openings and CES average hourly earnings from FRED.
+Fetch JOLTS job openings (BLS API) and CES average hourly earnings (FRED)
+for 10 private-sector industries, Jan 2012 – Dec 2024.
 
-FRED (Federal Reserve Economic Data) mirrors BLS data and provides free
-CSV downloads with no authentication. BLS bulk downloads are blocked for
-programmatic access.
+BLS API key required in .env as BLS_API_KEY.
+FRED CSV endpoint requires no authentication.
 
-Industries matched (JOLTS x CES available on FRED):
-  Manufacturing          JTS3000JOL  x  CES3000000003
-  Trade/Transport/Util   JTS4000JOL  x  CES4142000003
-  Prof & Business Svcs   JTS6000JOL  x  CES6000000003
-  Leisure & Hospitality  JTS7000JOL  x  CES7000000003
+Series ID format (BLS API JOLTS, 21 chars):
+  JTS + industry(6) + area(5=00000) + state(2=00) + sizeclass(2=00) + JO + L
 
 Run from project root:
     python code/fetch_bls.py
@@ -19,48 +16,130 @@ Output:
 """
 
 import io
+import json
+import os
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import requests
+from dotenv import load_dotenv
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+
+load_dotenv()
+BLS_KEY = os.getenv("BLS_API_KEY", "")
+if not BLS_KEY:
+    raise RuntimeError("BLS_API_KEY missing from .env")
 
 ROOT    = Path(__file__).parent.parent
 RAW_BLS = ROOT / "data" / "raw" / "bls"
 OUTPUTS = ROOT / "outputs"
-RAW_BLS.mkdir(parents=True, exist_ok=True)
-OUTPUTS.mkdir(exist_ok=True)
+for p in (RAW_BLS / "jolts", RAW_BLS / "ces", OUTPUTS):
+    p.mkdir(parents=True, exist_ok=True)
 
+BLS_API  = "https://api.bls.gov/publicAPI/v2/timeseries/data/"
 FRED_CSV = "https://fred.stlouisfed.org/graph/fredgraph.csv?id={sid}"
 HEADERS  = {"User-Agent": "wage-as-signal-research/1.0 (academic)"}
 
-START = "2012-01-01"
-END   = "2024-12-01"
+START_YEAR = 2012
+END_YEAR   = 2024
+START_DATE = "2012-01-01"
+END_DATE   = "2024-12-01"
 
-# ── series registry ───────────────────────────────────────────────────────────
+# ── series registries ─────────────────────────────────────────────────────────
+# JOLTS: JTS + 6-digit BLS industry code + 000000000 (area/state/sizeclass) + JOL
+# Codes discovered via DBnomics BLS/jt dataset metadata.
 
 JOLTS_SERIES = {
-    "Manufacturing"                  : "JTS3000JOL",
-    "Trade, Transportation, Utilities": "JTS4000JOL",
-    "Professional and Business Services": "JTS6000JOL",
-    "Leisure and Hospitality"        : "JTS7000JOL",
+    "Mining and Logging":                  "JTS110099000000000JOL",
+    "Construction":                        "JTS230000000000000JOL",
+    "Manufacturing":                       "JTS300000000000000JOL",
+    "Trade, Transportation, Utilities":    "JTS400000000000000JOL",
+    "Information":                         "JTS510000000000000JOL",
+    "Financial Activities":                "JTS510099000000000JOL",
+    "Professional and Business Services":  "JTS540099000000000JOL",
+    "Education and Health Services":       "JTS600000000000000JOL",
+    "Leisure and Hospitality":             "JTS700000000000000JOL",
+    "Other Services":                      "JTS810000000000000JOL",
 }
 
+# CES AHE: all available on FRED
 CES_SERIES = {
-    "Manufacturing"                  : "CES3000000003",
-    "Trade, Transportation, Utilities": "CES4142000003",
-    "Professional and Business Services": "CES6000000003",
-    "Leisure and Hospitality"        : "CES7000000003",
+    "Mining and Logging":                  "CES0600000003",
+    "Construction":                        "CES2000000003",
+    "Manufacturing":                       "CES3000000003",
+    "Trade, Transportation, Utilities":    "CES4142000003",
+    "Information":                         "CES5000000003",
+    "Financial Activities":                "CES5500000003",
+    "Professional and Business Services":  "CES6000000003",
+    "Education and Health Services":       "CES6500000003",
+    "Leisure and Hospitality":             "CES7000000003",
+    "Other Services":                      "CES8000000003",
 }
 
 
-# ── helpers ───────────────────────────────────────────────────────────────────
+# ── BLS API fetch ─────────────────────────────────────────────────────────────
+
+def fetch_bls_api(series_dict: dict) -> pd.DataFrame:
+    """Pull all JOLTS series from BLS API v2 in batches of 50."""
+    items = list(series_dict.items())
+    frames = []
+
+    for batch_start in range(0, len(items), 50):
+        batch = items[batch_start : batch_start + 50]
+        label_map = {sid: label for label, sid in batch}
+
+        # BLS API allows 20-year span per call; split if needed
+        for yr_start in range(START_YEAR, END_YEAR + 1, 20):
+            yr_end = min(yr_start + 19, END_YEAR)
+            payload = {
+                "seriesid":       list(label_map.keys()),
+                "registrationkey": BLS_KEY,
+                "startyear":      str(yr_start),
+                "endyear":        str(yr_end),
+            }
+            r = requests.post(BLS_API, json=payload, headers=HEADERS, timeout=30)
+            r.raise_for_status()
+            data = r.json()
+
+            for msg in data.get("message", []):
+                if "does not exist" in msg:
+                    print(f"  [WARN] {msg}")
+
+            for series in data.get("Results", {}).get("series", []):
+                sid  = series["seriesID"]
+                rows = series.get("data", [])
+                if not rows:
+                    continue
+                df = pd.DataFrame(rows)
+                df["date"]     = pd.to_datetime(df["year"].astype(str) + "-" + df["period"].str[1:] + "-01")
+                df["value"]    = pd.to_numeric(df["value"], errors="coerce")
+                df["industry"] = label_map[sid]
+                df["series_id"] = sid
+                frames.append(df[["industry", "series_id", "date", "value"]])
+
+            time.sleep(0.3)  # be polite
+
+    if not frames:
+        raise RuntimeError("No JOLTS data returned from BLS API")
+
+    out = (
+        pd.concat(frames, ignore_index=True)
+        .dropna(subset=["value"])
+        .query("@START_DATE <= date <= @END_DATE")
+        .drop_duplicates(["industry", "date"])
+        .sort_values(["industry", "date"])
+        .reset_index(drop=True)
+    )
+    return out
+
+
+# ── FRED fetch ────────────────────────────────────────────────────────────────
 
 def fetch_fred(series_id: str, cache_path: Path) -> pd.Series:
-    """Download a FRED series as a dated Series, caching the CSV locally."""
     if cache_path.exists():
         print(f"  [cached]  {cache_path.name}")
     else:
@@ -78,13 +157,11 @@ def fetch_fred(series_id: str, cache_path: Path) -> pd.Series:
     df["date"]  = pd.to_datetime(df["date"], errors="coerce")
     df["value"] = pd.to_numeric(df["value"], errors="coerce")
     df = df.dropna().set_index("date")["value"]
-    df = df[(df.index >= START) & (df.index <= END)]
-    return df
+    return df[(df.index >= START_DATE) & (df.index <= END_DATE)]
 
 
-def load_all(series_dict: dict, subfolder: str) -> pd.DataFrame:
-    folder = RAW_BLS / subfolder
-    folder.mkdir(exist_ok=True)
+def load_ces(series_dict: dict) -> pd.DataFrame:
+    folder = RAW_BLS / "ces"
     frames = []
     for industry, sid in series_dict.items():
         s = fetch_fred(sid, folder / f"{sid}.csv")
@@ -99,13 +176,15 @@ def load_all(series_dict: dict, subfolder: str) -> pd.DataFrame:
 # ── main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("\n-- JOLTS job openings (FRED) --")
-    jolts = load_all(JOLTS_SERIES, "jolts")
+    print("\n-- JOLTS job openings (BLS API) --")
+    jolts = fetch_bls_api(JOLTS_SERIES)
     jolts = jolts.rename(columns={"value": "openings_thousands"})
     print(f"  {len(jolts):,} obs, {jolts['industry'].nunique()} industries")
+    for ind, g in jolts.groupby("industry"):
+        print(f"    {ind:45s}  {len(g)} obs")
 
     print("\n-- CES average hourly earnings (FRED) --")
-    ces = load_all(CES_SERIES, "ces")
+    ces = load_ces(CES_SERIES)
     ces = ces.rename(columns={"value": "avg_hourly_earnings"})
     print(f"  {len(ces):,} obs, {ces['industry'].nunique()} industries")
 
@@ -128,10 +207,10 @@ if __name__ == "__main__":
     n_pre  = (~panel["post_chatgpt"]).sum()
     n_post = panel["post_chatgpt"].sum()
     print(f"  rows: {len(panel):,}  industries: {panel['industry'].nunique()}")
-    print(f"  date range: {panel['date'].min().date()} - {panel['date'].max().date()}")
+    print(f"  date range: {panel['date'].min().date()} – {panel['date'].max().date()}")
     print(f"  pre-ChatGPT: {n_pre}   post-ChatGPT: {n_post}")
     for ind, g in panel.groupby("industry"):
-        print(f"    {ind:40s}  {len(g)} obs  "
+        print(f"    {ind:45s}  {len(g)} obs  "
               f"wage ${g['avg_hourly_earnings'].mean():.2f}/hr  "
               f"openings {g['openings_thousands'].mean():.0f}k")
 
