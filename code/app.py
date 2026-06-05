@@ -614,3 +614,123 @@ _bls_section(
     r"N = 1,560 (10 industries x 156 months, Jan 2012-Dec 2024). "
     r"Each industry gets its own intercept alpha_i and wage slope beta_i."
 )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 9 — PER-INDUSTRY RESIDUAL DISTRIBUTIONS (pre vs post ChatGPT)
+# ══════════════════════════════════════════════════════════════════════════════
+
+st.markdown("---")
+st.markdown("## Residual shift by industry: pre vs post ChatGPT")
+st.markdown(
+    "Each panel shows the KDE of $\\varepsilon_{it}$ before (blue) and after "
+    "(orange) November 2022 for one industry, using the industry-specific "
+    "residuals from the 10-industry model above. "
+    "Dashed verticals = group means. "
+    "**Right shift** (orange to the right of blue) means that industry posted "
+    "more openings than its own wage trend predicted after ChatGPT."
+)
+
+_bls10_panel_path = OUTPUTS / "bls10_panel_with_residuals.csv"
+
+if not _bls10_panel_path.exists():
+    st.info("10-industry panel not found.")
+else:
+    @st.cache_data
+    def load_bls10_panel_sec9():
+        return pd.read_csv(_bls10_panel_path, parse_dates=["date"])
+
+    p10 = load_bls10_panel_sec9()
+    CUTOFF_TS = pd.Timestamp("2022-11-01")
+
+    industries_sorted = sorted(p10["industry"].unique())
+    n_ind = len(industries_sorted)
+    ncols = 5
+    nrows = (n_ind + ncols - 1) // ncols   # ceil division
+
+    SHORT = {
+        "Trade, Transportation, Utilities":   "Trade/Transport/Util",
+        "Professional and Business Services": "Prof. & Business Svcs",
+        "Education and Health Services":      "Education & Health",
+        "Mining and Logging":                 "Mining & Logging",
+        "Financial Activities":               "Financial Activities",
+        "Leisure and Hospitality":            "Leisure & Hospitality",
+        "Other Services":                     "Other Services",
+        "Information":                        "Information",
+        "Manufacturing":                      "Manufacturing",
+        "Construction":                       "Construction",
+    }
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=(18, nrows * 3.4))
+    axes = axes.flatten()
+
+    for idx, ind in enumerate(industries_sorted):
+        ax   = axes[idx]
+        grp  = p10[p10["industry"] == ind]["residual"]
+        pre  = p10[(p10["industry"] == ind) & (p10["date"] <  CUTOFF_TS)]["residual"]
+        post = p10[(p10["industry"] == ind) & (p10["date"] >= CUTOFF_TS)]["residual"]
+
+        x_lo = min(pre.min(), post.min()) - 0.15
+        x_hi = max(pre.max(), post.max()) + 0.15
+        xg   = np.linspace(x_lo, x_hi, 300)
+
+        for ser, color, lbl in [
+            (pre,  "steelblue",  f"Pre  (N={len(pre)})"),
+            (post, "darkorange", f"Post (N={len(post)})"),
+        ]:
+            kde = stats.gaussian_kde(ser)
+            ax.plot(xg, kde(xg), color=color, lw=2, label=lbl)
+            ax.fill_between(xg, kde(xg), alpha=0.15, color=color)
+            ax.axvline(ser.mean(), color=color, lw=1.4, ls="--")
+
+        delta = post.mean() - pre.mean()
+        sign  = "▶" if delta > 0 else "◀"
+        color_ann = "darkorange" if delta > 0 else "steelblue"
+        ax.set_title(SHORT.get(ind, ind), fontsize=9, fontweight="bold")
+        ax.text(0.97, 0.97,
+                f"{sign} Δmean = {delta:+.3f}",
+                transform=ax.transAxes, fontsize=8, va="top", ha="right",
+                color=color_ann,
+                bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.8))
+        ax.set_xlabel(r"$\varepsilon_{it}$", fontsize=8)
+        ax.tick_params(labelsize=7)
+        ax.set_xlim(x_lo, x_hi)
+        if idx % ncols == 0:
+            ax.set_ylabel("Density", fontsize=8)
+        ax.legend(fontsize=6.5, loc="upper left")
+
+    # hide any unused axes
+    for idx in range(n_ind, len(axes)):
+        axes[idx].set_visible(False)
+
+    plt.suptitle(
+        r"Industry-level $\varepsilon_{it}$ distributions — pre (blue) vs post (orange) ChatGPT",
+        fontsize=13, y=1.01,
+    )
+    plt.tight_layout()
+    st.pyplot(fig, use_container_width=True)
+    plt.close()
+
+    # summary table: direction and magnitude of shift
+    rows = []
+    for ind in industries_sorted:
+        pre  = p10[(p10["industry"] == ind) & (p10["date"] <  CUTOFF_TS)]["residual"]
+        post = p10[(p10["industry"] == ind) & (p10["date"] >= CUTOFF_TS)]["residual"]
+        delta = post.mean() - pre.mean()
+        ks_s, ks_p = stats.ks_2samp(pre, post)
+        rows.append({
+            "Industry":          ind,
+            "Pre mean":          f"{pre.mean():+.3f}",
+            "Post mean":         f"{post.mean():+.3f}",
+            "Δ mean (post−pre)": f"{delta:+.3f}",
+            "Direction":         "→ right" if delta > 0 else "← left",
+            "KS p-value":        f"{ks_p:.4f}",
+            "KS sig.":           "***" if ks_p < .01 else "**" if ks_p < .05 else "*" if ks_p < .10 else "",
+        })
+    st.markdown("**Mean shift and KS test by industry**")
+    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    st.caption(
+        "Δ mean = post-ChatGPT mean residual minus pre-ChatGPT mean residual. "
+        "Right shift → industry posted more than its wage trend predicted after Nov 2022. "
+        "KS p-value tests equality of pre and post distributions."
+    )
