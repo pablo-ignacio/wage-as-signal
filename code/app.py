@@ -422,7 +422,7 @@ def _bls_section(res_path, panel_path, section_title, subtitle):
 
     with left_b:
         industries = sorted(panel["industry"].unique())
-        cmap       = plt.cm.get_cmap("tab20", len(industries))
+        cmap       = plt.colormaps["tab20"].resampled(len(industries))
         ind_colors = {ind: cmap(i) for i, ind in enumerate(industries)}
 
         fig, ax = plt.subplots(figsize=(5, 4))
